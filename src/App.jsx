@@ -4,7 +4,7 @@
 // a shareable link: onitama.example.com/#KQ3XVB. Host plays blue, guest
 // plays red; the dealt set-aside card decides who moves first.
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { ensureAuth } from "./firebase.js";
 import {
   CARDS, movesFor, sideHasAnyMove, applyMove,
@@ -15,6 +15,52 @@ import {
 import { Torii, Piece, MoveCard, Board } from "./components.jsx";
 
 const SIDE_COLOR = { blue: "var(--blue)", red: "var(--red)" };
+
+// Fan geometry for a held card: offset from hand center → CSS vars.
+// `raise` lifts the selected card up and straightens it.
+function fanVars(off, raise) {
+  return {
+    "--hx": off * 64 + "px",
+    "--hy": Math.abs(off) * 8 - (raise ? 26 : 0) + "px",
+    "--hr": off * (raise ? 3 : 9) + "deg",
+  };
+}
+
+/**
+ * Your hand, held like real cards: fanned, tilted, overlapping. The
+ * remaining card glides to its new fan slot when one is played (CSS
+ * transition on the slot transform); a drawn card animates in from the
+ * next-card rail; a played card flies toward the board (the `leaving`
+ * ghost, rendered on top while the real state updates underneath).
+ */
+function Hand({ cards, selected, disabled, onCard, leaving }) {
+  const prevRef = useRef(cards);
+  const entering = new Set(cards.filter(c => !prevRef.current.includes(c)));
+  useEffect(() => { prevRef.current = cards; }, [cards.join(",")]);
+  const n = cards.length;
+  return (
+    <div className="handwrap">
+      {cards.map((c, i) => {
+        const off = i - (n - 1) / 2;
+        const isSel = selected === c;
+        return (
+          <div key={c}
+            className={"handcard" + (isSel ? " sel" : "") + (entering.has(c) ? " entering" : "") + (!disabled && !isSel ? " raisable" : "")}
+            style={fanVars(off, isSel)}>
+            <MoveCard cardKey={c} selected={isSel} dimmed={disabled}
+              onClick={!disabled ? () => onCard(c) : undefined} />
+          </div>
+        );
+      })}
+      {leaving && (
+        <div className={"handcard " + (leaving.dir === "side" ? "leaving-side" : "leaving")}
+          style={fanVars(leaving.off, true)}>
+          <MoveCard cardKey={leaving.card} selected />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function hashCode() {
   const h = window.location.hash.replace("#", "").trim().toUpperCase();
@@ -30,9 +76,16 @@ export function App() {
     ensureAuth().then(setUid).catch(e => setAuthErr(e?.message || "Could not connect."));
   }, []);
 
-  // Deep link: #CODE in the URL drops you straight into the join flow.
+  // Keep state in sync with the URL hash: entering a room sets #CODE, so a
+  // hash-change to empty (back button / Leave) exits, and a change to a new
+  // code stays put. (v1.0 bug: this handler reset roomCode to null on ANY
+  // hash — which was exactly the moment Join/Create set the hash, so every
+  // UI entry bounced straight back to the landing screen.)
   useEffect(() => {
-    const onHash = () => { const c = hashCode(); if (c) setRoomCode(null); };
+    const onHash = () => setRoomCode(prev => {
+      const c = hashCode();
+      return c ? (prev || c) : null;
+    });
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -182,7 +235,16 @@ function Game({ room, uid, onLeave }) {
   const [selPiece, setSelPiece] = useState(null);
   const [pendingPass, setPendingPass] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [leaving, setLeaving] = useState(null);   // ghost card mid-flight
   useEffect(() => { setSelCard(null); setSelPiece(null); setPendingPass(null); }, [room.lastMoveAt, room.status]);
+
+  function flyCard(card, dir) {
+    const i = myCards.indexOf(card);
+    setLeaving({ card, dir, off: i - (myCards.length - 1) / 2 });
+    // outlives the draw animation (120ms delay + 550ms) so the cleanup
+    // re-render can't clip the incoming card's flight
+    setTimeout(() => setLeaving(null), 800);
+  }
 
   const stuck = isMyTurn && board.length === 25 && !sideHasAnyMove(board, mySide, myCards);
   const legal = useMemo(
@@ -200,12 +262,14 @@ function Game({ room, uid, onLeave }) {
   }
   function doMove(to) {
     const { board: nb, status, winBy } = applyMove(board, mySide, selPiece, to);
+    flyCard(selCard, "board");
     persistTurn(room.code, {
       board: nb, ...swapCards(selCard), status, winBy,
       lastMove: { from: selPiece, to, card: selCard },
     });
   }
   function doPass(cardKey) {
+    flyCard(cardKey, "side");
     persistTurn(room.code, {
       ...swapCards(cardKey),
       lastMove: { from: -1, to: -1, card: cardKey },
@@ -265,14 +329,9 @@ function Game({ room, uid, onLeave }) {
           <Board board={board} mySide={mySide || "blue"} legal={legal}
             selectedPiece={selPiece} lastMove={room.lastMove}
             disabled={!isMyTurn || stuck} onSquare={onSquare} />
-          <div className="hand">
-            {myCards.map(c => (
-              <MoveCard key={c} cardKey={c}
-                selected={selCard === c}
-                dimmed={!isMyTurn}
-                onClick={mySide ? () => onCardClick(c) : undefined} />
-            ))}
-          </div>
+          <Hand cards={myCards} selected={selCard} leaving={leaving}
+            disabled={!mySide || !isMyTurn}
+            onCard={onCardClick} />
           {playerLine(mySide || "blue", !!mySide)}
           {stuck && !pendingPass && (
             <div className="banner">No legal moves — pick a card to exchange &amp; pass.</div>
