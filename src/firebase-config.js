@@ -7,9 +7,9 @@
 // A web apiKey is an identifier, not a secret — access control lives
 // entirely in firestore.rules.
 export const firebaseConfig = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  projectId: "REPLACE_ME",
+  apiKey: "AIzaSyDMirkB6R0vUtf0t1kGbwRuQZ07PsTw2Vo",
+  authDomain: "onitama-duel.firebaseapp.com",
+  projectId: "onitama-duel",
 };
 
 export const isConfigured = firebaseConfig.apiKey !== "REPLACE_ME";
