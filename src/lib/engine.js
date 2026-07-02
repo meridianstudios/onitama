@@ -32,6 +32,15 @@ export const CARDS = {
   cobra:    { name: "Cobra",    stamp: "red",  moves: [[-1, 0], [1, 1], [1, -1]] },
 };
 
+/**
+ * Chess-style Elo: rating points the winner takes off the loser (symmetric,
+ * so the pair's total is conserved). K=32, minimum 1 point per game.
+ */
+export function eloDelta(winnerRating, loserRating, k = 32) {
+  const expected = 1 / (1 + Math.pow(10, (loserRating - winnerRating) / 400));
+  return Math.max(1, Math.round(k * (1 - expected)));
+}
+
 /** Fresh board: 4 students flanking a master on each home row. */
 export function startingBoard() {
   const b = Array(25).fill("");

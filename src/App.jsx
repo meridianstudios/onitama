@@ -11,6 +11,7 @@ import {
 } from "./lib/engine.js";
 import {
   createRoom, joinRoom, watchRoom, persistTurn, resignRoom, voteRematch, deleteRoom,
+  getPlayer, applyMyRating,
 } from "./lib/rooms.js";
 import { Torii, Piece, MoveCard, Board } from "./components.jsx";
 
@@ -104,8 +105,11 @@ function Landing({ uid, authErr, onEnter }) {
   const [code, setCode] = useState(hashCode());
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
+  const [me, setMe] = useState(null);
   const lastRoom = localStorage.getItem("oni_room") || "";
   const ready = uid && name.trim().length >= 2;
+
+  useEffect(() => { if (uid) getPlayer(uid).then(setMe).catch(() => {}); }, [uid]);
 
   function remember() {
     localStorage.setItem("oni_name", name.trim());
@@ -164,6 +168,11 @@ function Landing({ uid, authErr, onEnter }) {
           </button>
         )}
       </div>
+      {me && (
+        <div className="ratingchip">
+          <span className="r">{me.rating ?? 1000}</span> Elo · {me.wins || 0}W {me.losses || 0}L
+        </div>
+      )}
       <div className="footnote">Onitama board game by Shimpei Sato · fan-made online table</div>
     </div>
   );
@@ -236,7 +245,20 @@ function Game({ room, uid, onLeave }) {
   const [pendingPass, setPendingPass] = useState(null);
   const [copied, setCopied] = useState(false);
   const [leaving, setLeaving] = useState(null);   // ghost card mid-flight
+  const [myDelta, setMyDelta] = useState(null);   // Elo change from the finished game
   useEffect(() => { setSelCard(null); setSelPiece(null); setPendingPass(null); }, [room.lastMoveAt, room.status]);
+  useEffect(() => { if (room.status === "active") setMyDelta(null); }, [room.status]);
+
+  // Rate the finished game — once per side, guarded by room.ratedBy.
+  const ratedRef = useRef(null);
+  useEffect(() => {
+    const over = room.status === "blue_wins" || room.status === "red_wins";
+    if (!over || !mySide || room.ratedBy?.[mySide]) return;
+    const key = room.code + ":" + room.lastMoveAt;
+    if (ratedRef.current === key) return;
+    ratedRef.current = key;
+    applyMyRating(room, mySide, uid).then(d => { if (d != null) setMyDelta(d); }).catch(() => {});
+  }, [room.status, room.lastMoveAt]);
 
   function flyCard(card, dir) {
     const i = myCards.indexOf(card);
@@ -300,10 +322,12 @@ function Game({ room, uid, onLeave }) {
   const oppVote = mySide && room.rematch?.[oppSide];
   const votes = (room.rematch?.blue ? 1 : 0) + (room.rematch?.red ? 1 : 0);
 
+  const ratingOf = side => (side === "blue" ? room.blueRating : room.redRating);
   const playerLine = (side, isMe) => (
-    <div className="playerline" style={{ transform: side === oppSide && !mySide ? undefined : undefined }}>
+    <div className="playerline">
       <span className="dot" style={{ background: SIDE_COLOR[side] }} />
       <span>{nameOf(side)}</span>
+      {ratingOf(side) != null && <span className="elo">{ratingOf(side)}</span>}
       {isMe && <span className="you">YOU</span>}
       {room.status === "active" && room.currentTurn === side && <span className="tomove">● to move</span>}
     </div>
@@ -392,9 +416,14 @@ function Game({ room, uid, onLeave }) {
               {room.winBy === "stream" && "Way of the Stream — the temple is taken."}
               {room.winBy === "resign" && "By resignation."}
             </div>
+            {myDelta != null && (
+              <div className={"elodelta " + (myDelta >= 0 ? "up" : "down")}>
+                {myDelta >= 0 ? "+" : ""}{myDelta} Elo
+              </div>
+            )}
             <div className="row">
               <button className="btn primary" disabled={myVote}
-                onClick={() => voteRematch(room.code, mySide, !!oppVote)}>
+                onClick={() => voteRematch(room.code, mySide, !!oppVote, room)}>
                 {myVote ? "Waiting… (" + votes + "/2)" : "Rematch" + (oppVote ? " (1/2)" : "")}
               </button>
               <button className="btn ghost" onClick={() => { localStorage.removeItem("oni_room"); onLeave(); }}>Leave</button>

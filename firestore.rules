@@ -38,6 +38,16 @@ service cloud.firestore {
       );
     }
 
+    // Elo ratings — one doc per anonymous uid. Anyone signed in can read
+    // (ratings show next to names); only the owner writes their own doc.
+    // Honest-client model: rules can't verify Elo math, they just stop
+    // players from editing each other's ratings.
+    match /onitama_players/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
     // Everything else: locked.
     match /{document=**} {
       allow read, write: if false;
